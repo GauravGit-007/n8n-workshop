@@ -1,0 +1,281 @@
+{
+  "name": "Telegram → Gmail Summarizer via Perplexity",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// Input: Telegram update in $json.message.text\n// Output: {days, query, chatId, isUpdate}\nconst text = ($json?.message?.text || '').trim();\nconst chatId = $json?.message?.chat?.id;\n// Pattern: 'update me' or 'update me 21'\nconst m = text.match(/^update\\s+me(?:\\s+(\\d+))?$/i);\nconst days = m && m[1] ? parseInt(m[1], 10) : 14;\nconst isUpdate = !!m;\nconst query = `from:007gouravjha@gmail.com newer_than:${isUpdate ? days : 14}d`;\nreturn [{ json: { text, chatId, isUpdate, days: isNaN(days) ? 14 : days, query } }];\n"
+      },
+      "id": "138ab2df-6ec3-465e-9338-8d8aba45b7f7",
+      "name": "Parse Command1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -384,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{$node[\"Parse Command1\"].json.chatId}}",
+        "text": "Send:  \n`update me`  → last 14 days  \n`update me 21` → last 21 days  ",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "8212b136-77b8-46ab-b574-e9f026e05b2e",
+      "name": "Reply: Usage1",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        192,
+        928
+      ],
+      "webhookId": "828212ca-0f03-46a3-b662-d3bc36eefc73",
+      "credentials": {
+        "telegramApi": {
+          "id": "f3V5htHsQd2Rytj0",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "getAll",
+        "additionalFields": {
+          "format": "full",
+          "includeSpamTrash": true,
+          "labelIds": [
+            "INBOX"
+          ],
+          "q": "={{$node[\"Parse Command1\"].json.query}}\n"
+        }
+      },
+      "id": "d5c1d89f-494f-43c5-a529-6ff0c7a926a8",
+      "name": "Gmail: Search Messages1",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 1,
+      "position": [
+        48,
+        720
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "ROt3TbCCXqLNcVcU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate Gmail messages into readable snippets with date\nconst items = $items();\nconst trimmed = items.slice(0, 30);\n\nfunction headerValue(headers, name) {\n  if (!Array.isArray(headers)) return '';\n  const h = headers.find(x => x && x.name && x.name.toLowerCase() === name.toLowerCase());\n  return h ? h.value : '';\n}\n\nfunction extractBody(payload) {\n  if (!payload) return '';\n  const parts = payload.parts || [];\n  for (const p of parts) {\n    if (p.mimeType === 'text/plain' && p.body?.data) {\n      try {\n        return Buffer.from(p.body.data.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');\n      } catch(e){}\n    }\n  }\n  return payload.body?.data ? Buffer.from(payload.body.data, 'base64').toString('utf8') : '';\n}\n\nconst lines = trimmed.map((it, i) => {\n  const j = it.json || {};\n  const headers = j.payload?.headers || [];\n  const subject = headerValue(headers, 'Subject') || '(no subject)';\n  const dateRaw = headerValue(headers, 'Date') || '';\n  const date = dateRaw ? new Date(dateRaw).toDateString() : '(no date)';\n  const from = headerValue(headers, 'From') || '(unknown sender)';\n  const body = extractBody(j.payload).slice(0, 500).replace(/\\s+/g, ' ').trim();\n  const snippet = (j.snippet || '').replace(/\\s+/g, ' ').trim();\n  return `#${i + 1}\\nDate: ${date}\\nFrom: ${from}\\nSubject: ${subject}\\nBody: ${body || snippet}`;\n});\n\nconst days = $node['Parse Command1'].json.days;\nconst header = `Summarize emails from 007gouravjha@gmail.com for the last ${days} days. Include exact dates, subjects, senders, and main content summaries.`;\nconst body = lines.length ? lines.join('\\n\\n') : 'NO_RESULTS';\nreturn [{ json: { prompt: `${header}\\n\\n${body}` } }];\n"
+      },
+      "id": "b7744d0e-2305-4459-941d-c2c0ee7af588",
+      "name": "Prepare Summarization Text1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        288,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "messages": {
+          "message": [
+            {
+              "content": "You are an assistant that reads Gmail messages and produces a short, useful summary. \nOutput a bullet list grouped by topic, mentioning dates, senders, and main actions. \nIf input text includes \"NO_RESULTS\", reply exactly: \"No recent emails found.\"\n",
+              "role": "system"
+            },
+            {
+              "content": "={{$json.prompt}}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.2
+        },
+        "requestOptions": {}
+      },
+      "id": "3813c242-1b12-45ae-afed-36c99d194465",
+      "name": "Perplexity (sonar)1",
+      "type": "n8n-nodes-base.perplexity",
+      "typeVersion": 1,
+      "position": [
+        528,
+        720
+      ],
+      "credentials": {
+        "perplexityApi": {
+          "id": "H1D357aTnAtQaUX2",
+          "name": "Perplexity account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{$node[\"Parse Command1\"].json.chatId}}",
+        "text": "=={{$json.choices[0].message.content || \"No summary generated — Perplexity returned empty output.\"}}\n",
+        "additionalFields": {}
+      },
+      "id": "7e9161d0-77d1-473b-b612-4eafaf8a9985",
+      "name": "Telegram: Send Summary1",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        768,
+        720
+      ],
+      "webhookId": "5aecbe57-abbf-4863-8934-9ec6ea1739ca",
+      "credentials": {
+        "telegramApi": {
+          "id": "f3V5htHsQd2Rytj0",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "671d3af2-10fe-4d3e-995b-c15e0a44510c",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -656,
+        848
+      ],
+      "webhookId": "62b9bbaf-f13c-47a0-8b5e-2c327fb2ed18",
+      "credentials": {
+        "telegramApi": {
+          "id": "f3V5htHsQd2Rytj0",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "5220c7fe-8612-4744-a31e-29e338f77703",
+              "leftValue": "={{$json.text}}",
+              "rightValue": "update me",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -144,
+        880
+      ],
+      "id": "746aa499-1adf-49bf-ade6-d66735c37ce9",
+      "name": "If"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Parse Command1": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail: Search Messages1": {
+      "main": [
+        [
+          {
+            "node": "Prepare Summarization Text1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Summarization Text1": {
+      "main": [
+        [
+          {
+            "node": "Perplexity (sonar)1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Perplexity (sonar)1": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Send Summary1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Command1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Gmail: Search Messages1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply: Usage1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "241d0c3a-7121-4496-88bf-a06375c6c44a",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "79153a600dbfad17e65d219f5392a5af683b3c0d033818ce65168c22bd801534"
+  },
+  "id": "PdcH7wHaibqVUnnl",
+  "tags": []
+}

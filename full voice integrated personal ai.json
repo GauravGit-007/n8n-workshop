@@ -1,0 +1,1101 @@
+{
+  "name": "Twilio Voice Minimal",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "03a651db-aee1-4671-92e2-7bcaec179b5e",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1,
+      "position": [
+        -4800,
+        -64
+      ],
+      "webhookId": "230d8731-c5e5-49f5-a185-59168ef3618d",
+      "credentials": {
+        "telegramApi": {
+          "id": "boyfGomCzAhBUtUn",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ !!$node[\"Telegram Trigger\"].json[\"message\"]?.voice }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "91d48997-3ddc-4f0b-867c-7d7d1b65828f",
+      "name": "Check Voice",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -4592,
+        -192
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $node[\"Telegram Trigger\"].json[\"message\"][\"voice\"][\"file_id\"] }}",
+        "additionalFields": {}
+      },
+      "id": "78013a69-0420-463e-9c8c-de5e53ba8656",
+      "name": "Download Voice",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        -4352,
+        -208
+      ],
+      "webhookId": "82ada575-a893-4114-9723-bd12fe806bb2",
+      "credentials": {
+        "telegramApi": {
+          "id": "boyfGomCzAhBUtUn",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/file/bot7976634050:AAGxXizIMBBQKgd9svYI1dQq_8LoByTKf-c/{{ $json.result.file_path }}\n",
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "=data",
+        "options": {}
+      },
+      "id": "186911dc-c30a-47c2-bc85-c0f968862f7f",
+      "name": "Download Audio File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -4176,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "inputType": "binary",
+        "simplify": false,
+        "options": {}
+      },
+      "id": "526eeec2-5018-4bac-94c1-ecdb376130d6",
+      "name": "Transcribe Audio",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        -3776,
+        -208
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "cmRHhMBjSXXNFG8u",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const tnode = $node[\"Telegram Trigger\"].json;\nlet text = \"\";\nif (tnode && tnode.message) {\n  if (tnode.message.text) text = tnode.message.text;\n  else if (tnode.message.caption) text = tnode.message.caption;\n}\nconst chatId = tnode?.message?.chat?.id;\nreturn [{ json: { text, chatId } }];"
+      },
+      "id": "b21e3f8e-8c7a-4a14-a395-98191e67f497",
+      "name": "Normalize Text",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -4352,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "messages": {
+          "message": [
+            {
+              "content": "You are an intent classifier for a personal assistant. Always return valid JSON (no extra words, no surrounding backticks, nothing else). Output must be a JSON object with this shape:\n\n{\n  \"intent\": \"CALL\" | \"REMINDER\" | \"EMAIL\" | \"GENERAL_CHAT\",\n  \"data\": { ... },\n  \"_confidence\": 0.00,            // optional number 0..1 (two decimals)\n  \"_notes\": \"short note if needed\" // optional short string\n}\n\nRequirements for \"data\" by intent:\n- CALL: {\"targetPerson\":string|null,\"phoneNumber\":string|null,\"purpose\":string|null}\n- REMINDER: {\"title\":string|null,\"dateTime\":string|null} // dateTime MUST be ISO8601 when present\n- EMAIL: {\"recipientName\":string|null,\"recipientEmail\":string|null,\"subject\":string|null,\"mainPoints\":string|null}\n- GENERAL_CHAT: {\"text\":string}\n\nRules:\n1. If any required sub-field cannot be determined from the input, set it to null (do not omit it).\n2. If a date is present, normalize to ISO8601. If you cannot, set dateTime:null but still return REMINDER intent if intent is certain.\n3. Always include _confidence between 0.00 and 1.00 (0 to 2 decimals). If unsure, give a low confidence (e.g., 0.30).\n4. Do not output anything other than the single JSON object.\n5. Minimal verbosity in _notes only when it helps (e.g., \"missing phone\", \"date ambiguous\").\n\nExamples:\n\nInput: \"Call Riya at +91 98765 43210 about the design review tomorrow 3pm\"\nOutput:\n{\n  \"intent\":\"CALL\",\n  \"data\": {\n    \"targetPerson\":\"Riya\",\n    \"phoneNumber\":\"+919876543210\",\n    \"purpose\":\"design review tomorrow 3pm\"\n  },\n  \"_confidence\":0.95\n}\n\nInput: \"Remind me to pay rent on August 1 at 9am\"\nOutput:\n{\n  \"intent\":\"REMINDER\",\n  \"data\": {\n    \"title\":\"Pay rent\",\n    \"dateTime\":\"2026-08-01T09:00:00Z\"\n  },\n  \"_confidence\":0.9\n}\n\nInput: \"Email Aman — subject: Q3 numbers; ask about the spreadsheet and next steps\"\nOutput:\n{\n  \"intent\":\"EMAIL\",\n  \"data\":{\n    \"recipientName\":\"Aman\",\n    \"recipientEmail\":null,\n    \"subject\":\"Q3 numbers\",\n    \"mainPoints\":\"ask about the spreadsheet and next steps\"\n  },\n  \"_confidence\":0.90,\n  \"_notes\":\"recipient email not found\"\n}\n\nIf the user's text is conversational or unclear, prefer GENERAL_CHAT with data.text containing the full text and _confidence low if classification uncertain.\n",
+              "role": "system"
+            },
+            {
+              "content": "={{ $json.candidates?.[0]?.content?.parts?.[0]?.text ?? $json.text ?? '' }}"
+            }
+          ]
+        },
+        "options": {},
+        "requestOptions": {}
+      },
+      "id": "98f56b23-dc46-483e-9675-a0cbc340711c",
+      "name": "Detect Intent",
+      "type": "n8n-nodes-base.perplexity",
+      "typeVersion": 1,
+      "position": [
+        -3712,
+        32
+      ],
+      "credentials": {
+        "perplexityApi": {
+          "id": "yimrtEMyqqbgU4bi",
+          "name": "Perplexity account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const rawModelText = (\n  ($json.choices?.[0]?.message?.content) ||\n  $json.transcript ||\n  $json.text ||\n  ''\n).toString().trim();\n\nfunction tryParseJSON(s){ try { return JSON.parse(s); } catch(e) { return null; } }\n\nfunction normalizePhone(candidate){\n  if(!candidate) return null;\n  const digits = candidate.replace(/[^\\d+]/g, '');\n  if(digits.length >= 8 && digits.length <= 15){\n    return digits.startsWith('+') ? digits : ('+' + digits);\n  }\n  return null;\n}\n\nfunction extractFirstEmail(text){\n  const m = text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}/);\n  return m ? m[0] : null;\n}\n\nfunction extractPhone(text){\n  const m = text.match(/(\\+?\\d[\\d\\s().-]{6,}\\d)/);\n  return m ? m[0].replace(/\\s+/g,'') : null;\n}\n\nfunction parseDateISO(s){\n  if(!s) return null;\n  const parsed = Date.parse(s);\n  return isNaN(parsed) ? null : new Date(parsed).toISOString();\n}\n\nlet parsed = tryParseJSON(rawModelText);\nlet needsClarification = false;\nlet notes = '';\nlet confidence = null;\n\nif(parsed && typeof parsed === 'object' && parsed.intent){\n  confidence = typeof parsed._confidence === 'number' ? parsed._confidence : null;\n  if(!parsed.data) parsed.data = {};\n\n  switch(parsed.intent){\n    case 'CALL':\n      parsed.data.targetPerson = parsed.data.targetPerson ?? null;\n      parsed.data.phoneNumber = normalizePhone(parsed.data.phoneNumber) ?? null;\n      parsed.data.purpose = parsed.data.purpose ?? null;\n      break;\n\n    case 'REMINDER':\n      parsed.data.title = parsed.data.title ?? null;\n      parsed.data.dateTime = parsed.data.dateTime ? parseDateISO(parsed.data.dateTime) : null;\n      if(parsed.data.dateTime === null && parsed.data.dateTime !== undefined){\n        needsClarification = true;\n        notes += notes ? '; date ambiguous' : 'date ambiguous';\n      }\n      parsed.data.description = parsed.data.description ?? null;\n      break;\n\n    case 'EMAIL':\n      parsed.data.recipientName = parsed.data.recipientName ?? null;\n      const extracted = parsed.data.recipientEmail ?? extractFirstEmail(rawModelText) ?? null;\n      parsed.data.recipientEmail = extracted;\n      parsed.data.subject = parsed.data.subject ?? null;\n      parsed.data.mainPoints = parsed.data.mainPoints ?? null;\n\n      if(!parsed.data.recipientName && !parsed.data.recipientEmail){\n        needsClarification = true;\n        notes += notes ? '; no recipient identified' : 'no recipient identified';\n      }\n      break;\n\n    case 'GENERAL_CHAT':\n      parsed.data.text = parsed.data.text ?? rawModelText ?? '';\n      break;\n\n    default:\n      parsed = { intent: 'GENERAL_CHAT', data: { text: rawModelText } };\n      needsClarification = true;\n  }\n\n} else {\n  const text = rawModelText.toLowerCase();\n  let intent = 'GENERAL_CHAT';\n  let data = {};\n  confidence = 0.35;\n\n  if(/(^|\\s)call\\s|^dial\\s|phone\\s|ring\\s/.test(text)){\n    intent = 'CALL';\n    const phone = extractPhone(rawModelText);\n    data.phoneNumber = normalizePhone(phone) ?? null;\n    data.targetPerson = (rawModelText.match(/call\\s+([A-Z][a-z0-9]+(?:\\s[A-Z][a-z0-9]+)*)/i)?.[1]) || null;\n    data.purpose = rawModelText;\n    if(!data.phoneNumber && !data.targetPerson) needsClarification = true;\n\n  } else if(/\\b(remind|reminder|remind me|set a reminder|don't forget)\\b/.test(text)){\n    intent = 'REMINDER';\n    data.title = (rawModelText.match(/remind me to\\s+(.+?)(?:\\bon\\b|\\bat\\b|$)/i)?.[1]) || rawModelText;\n    const dt = rawModelText.match(/\\b(on|at|tomorrow|today|next|in\\s+\\d+)/i) ? rawModelText : null;\n    data.dateTime = parseDateISO(dt);\n    if(!data.dateTime) needsClarification = true;\n\n  } else if(/\\b(email|e-mail|mail|send mail|send an email)\\b/.test(text)){\n    intent = 'EMAIL';\n    data.recipientEmail = extractFirstEmail(rawModelText);\n    data.recipientName = (rawModelText.match(/to\\s+([A-Z][a-z0-9]+(?:\\s[A-Z][a-z0-9]+)*)/i)?.[1]) || null;\n    data.subject = (rawModelText.match(/subject[:\\-]\\s*([^\\n]+)/i)?.[1]) || null;\n    data.mainPoints = rawModelText;\n    if(!data.recipientEmail) needsClarification = true;\n\n  } else {\n    intent = 'GENERAL_CHAT';\n    data.text = rawModelText;\n    confidence = 0.5;\n  }\n\n  parsed = { intent, data, _confidence: confidence, _notes: notes || null };\n}\n\nfunction ensureShape(parsed){\n  const out = { intent: parsed.intent, data: {} };\n\n  switch(parsed.intent){\n    case 'CALL':\n      out.data.targetPerson = parsed.data.targetPerson ?? null;\n      out.data.phoneNumber = parsed.data.phoneNumber ?? null;\n      out.data.purpose = parsed.data.purpose ?? null;\n      break;\n\n    case 'REMINDER':\n      out.data.title = parsed.data.title ?? null;\n      out.data.dateTime = parsed.data.dateTime ?? null;\n      out.data.description = parsed.data.description ?? null;\n      break;\n\n    case 'EMAIL':\n      out.data.recipientName = parsed.data.recipientName ?? null;\n      out.data.recipientEmail = parsed.data.recipientEmail ?? null;\n      out.data.subject = parsed.data.subject ?? null;\n      out.data.mainPoints = parsed.data.mainPoints ?? null;\n      break;\n\n    default:\n      out.data.text = parsed.data?.text || rawModelText;\n  }\n\n  out._confidence = parsed._confidence ?? confidence ?? 0.4;\n  if(parsed._notes) out._notes = parsed._notes;\n  if(needsClarification) out._needsClarification = true;\n\n  return out;\n}\n\nconst finalParsed = ensureShape(parsed);\n\n// unified chatId source\nconst chatId = $node[\"Telegram Trigger\"]?.json?.message?.chat?.id || null;\n\nreturn [\n  {\n    json: {\n      chatId,\n      parsed: finalParsed\n    }\n  }\n];\n"
+      },
+      "id": "6acb6bc5-746f-4839-84a1-41de00211848",
+      "name": "Parse Intent",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -3536,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.parsed.intent }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": "CALL"
+            },
+            {
+              "value2": "REMINDER",
+              "output": 1
+            },
+            {
+              "value2": "EMAIL",
+              "output": 2
+            },
+            {
+              "value2": "GENERAL_CHAT",
+              "output": 3
+            }
+          ]
+        },
+        "fallbackOutput": 3
+      },
+      "id": "5f1036c7-8988-469c-8ba8-2b61a98de812",
+      "name": "Route Intent",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        -3328,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "messages": {
+          "message": [
+            {
+              "content": "=You are JARVIS, an AI voice agent calling on behalf of Gaurav. \nGenerate a natural, concise, and professional phone call script.\n\nFollow this structure:\n\n1. Greeting  \n2. Self-introduction  \n3. State that you’re calling on behalf of Gaurav  \n4. Clearly communicate the purpose of the call  \n5. Ask if the recipient has any questions or needs clarification  \n6. Provide next steps if needed  \n7. End the call politely\n\nRules:\n• Tone must be confident, calm, and professional.  \n• No robotic phrasing.  \n• Keep sentences short and human-like.  \n• Do NOT break character.  \n• No filler words like “uh” or “umm”.  \n• Script must not exceed 8–10 sentences.  \n• Do not mention you are reading text.  \n• If the purpose is sensitive, speak respectfully.\n\nInput:\nPerson Name: {{ $json.parsed.data.targetPerson }}\nPurpose of Call: {{ $json.parsed.data.purpose }}\n\nOutput Format:\nA clean call script in plain text. No markdown.\n",
+              "role": "system"
+            },
+            {
+              "content": "={{ JSON.stringify($json.parsed.data) }}"
+            }
+          ]
+        },
+        "options": {},
+        "requestOptions": {}
+      },
+      "id": "2e72cac4-3a3b-44bc-829f-9ed36b2e7107",
+      "name": "Generate Call Script",
+      "type": "n8n-nodes-base.perplexity",
+      "typeVersion": 1,
+      "position": [
+        -2640,
+        -224
+      ],
+      "credentials": {
+        "perplexityApi": {
+          "id": "yimrtEMyqqbgU4bi",
+          "name": "Perplexity account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "=683340074",
+        "text": "={{ $json.choices && $json.choices[0] && $json.choices[0].message ? $json.choices[0].message.content : 'Call script generated.' }}",
+        "additionalFields": {}
+      },
+      "id": "c150c0b9-0fe6-4fec-92ca-36239eb9312a",
+      "name": "Reply to Telegram (Call)",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        -1808,
+        -240
+      ],
+      "webhookId": "93c30979-6fa2-4fc6-a265-1eb700a3b48d",
+      "credentials": {
+        "telegramApi": {
+          "id": "boyfGomCzAhBUtUn",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "messages": {
+          "message": [
+            {
+              "content": "=You normalize reminders into strict machine-readable JSON.\n\nCurrent date: {{ $now }}\nUser timezone: Asia/Kolkata (IST, UTC+05:30)\n\nInterpret all relative dates and times (“today”, “tomorrow”, “next Monday”, \n“in 2 hours”, etc.) using the provided current date and timezone.\n\nOutput one JSON object only:\n\n{\n  \"title\": string,\n  \"dateTime\": string | null,\n  \"description\": string\n}\n\nRules:\n1. dateTime must be ISO8601 with the +05:30 offset, e.g. \"2025-02-12T09:00:00+05:30\".\n2. If time is missing, default to 09:00 AM IST.\n3. If date is missing or ambiguous, set dateTime to null.\n4. Title should be a short, informative label (\"Meeting\", \"Pay rent\", etc.)\n5. Description should summarize the request.\n6. No commentary, no markdown, no text outside the JSON.\n",
+              "role": "system"
+            },
+            {
+              "content": "={{ JSON.stringify($json.parsed.data) }}"
+            }
+          ]
+        },
+        "options": {},
+        "requestOptions": {}
+      },
+      "id": "12af7325-befe-447c-9bfa-4c6ea2089fb7",
+      "name": "Generate Reminder",
+      "type": "n8n-nodes-base.perplexity",
+      "typeVersion": 1,
+      "position": [
+        -2640,
+        -16
+      ],
+      "credentials": {
+        "perplexityApi": {
+          "id": "yimrtEMyqqbgU4bi",
+          "name": "Perplexity account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "516d73222b4723fd24d749fa48bca5e0bb1eead0cc4bcddcb617b3fc665d8fcd@group.calendar.google.com",
+          "mode": "list",
+          "cachedResultName": "n8n"
+        },
+        "start": "2024-12-01T00:00:00",
+        "end": "2025-12-11T05:55:12",
+        "useDefaultReminders": "={{ true }}",
+        "additionalFields": {}
+      },
+      "id": "92f7713d-d7f2-49b9-9da4-e42f270f6cb3",
+      "name": "Create Calendar Event",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1,
+      "position": [
+        -1984,
+        -32
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "usz9fq5UKDHl0pIa",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "=683340074",
+        "text": "=={{ `Reminder created: ${$item(0).$node[\"PARSE REMINDER\"].json.rem.title} at ${$item(0).$node[\"PARSE REMINDER\"].json.rem.dateTime}` }}\n",
+        "additionalFields": {}
+      },
+      "id": "e7c392e7-0c9b-4e09-b0bc-0818497cb03c",
+      "name": "Reply to Telegram (Reminder)",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        -1808,
+        -48
+      ],
+      "webhookId": "c9828550-f388-4357-93a4-423b7f6fa3ec",
+      "credentials": {
+        "telegramApi": {
+          "id": "boyfGomCzAhBUtUn",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "messages": {
+          "message": [
+            {
+              "content": "You are a professional email writer. Given cleaned input data, produce a single JSON object and **nothing else** with this exact shape:\n\n{\"subject\": \"<string>\", \"body\": \"<string>\"}\n\nRules (must follow exactly):\n1. Return only the single JSON object. No commentary, no code fences, no extra fields.\n2. \"subject\" must be concise (4–12 words), capitalized like a title, and clearly reflect the main purpose.\n3. \"body\" must be a professional email string that:\n   a. Begins with an appropriate salutation (e.g., \"Hi Aman,\" or \"Hello Dr. Sharma,\") when recipientName is provided; otherwise use \"Hello,\".\n   b. Contains 2–4 brief paragraphs (each 1–3 sentences): opening (purpose), core details or requests, closing with next steps or clear call-to-action.\n   c. Ends with a sign-off and a sender placeholder \"[Your Name]\" unless a senderName is provided, in which case use that exact name.\n   d. Uses clear, specific language; avoid vague statements. If the input includes deadlines, numbers, or attachments, mention them precisely.\n4. Preserve any explicit data provided (recipientName, subjectHint, keyPoints, deadline, attachmentMention) and do not invent facts beyond reasonable inference.\n5. If essential information is missing (recipientName, required deadline, or key action), still produce an email that:\n   - highlights the missing item clearly in the body (e.g., \"Could you confirm the appropriate recipient email?\" or \"Please confirm the deadline\"), and\n   - uses neutral phrasing rather than asking rhetorical questions.\n6. Do not include tracking pixels, marketing hype, or legal disclaimers.\n7. Maintain a professional tone appropriate for business communication—polite, concise, and confident. Do not claim to be an AI.\n8. Keep total body length between 80 and 400 words. Prefer clarity over verbosity.\n9. If the user's instructions specify tone (e.g., \"casual\", \"formal\", \"urgent\"), apply that tone; default to \"professional, neutral\".\n10. Output must be valid JSON (escape newlines properly in the string).\n\nData-in inputs you may receive (the LLM will be given these in the prompt context):\n- recipientName (optional)\n- recipientEmail (optional)\n- subjectHint (optional short phrase)\n- keyPoints (string of core points or bullet-style content)\n- deadline (optional ISO or natural-language date)\n- attachments (optional short description)\n- senderName (optional)\n- tone (optional: formal | casual | urgent | neutral)\n\nExamples:\n\nInput data:\nrecipientName: \"Aman\"\nsubjectHint: \"Q3 numbers\"\nkeyPoints: \"ask about spreadsheet, confirm figures, request next steps\"\ndeadline: \"next Monday\"\nsenderName: \"Gaurav\"\ntone: \"neutral\"\n\nOutput (single JSON):\n{\n  \"subject\":\"Q3 Numbers — Request for Clarification\",\n  \"body\":\"Hi Aman,\\n\\nI hope you’re well. I’m following up about the Q3 numbers in the spreadsheet you shared. Could you confirm the figures in the Revenue and COGS columns and let me know if any revisions are pending?\\n\\nIf possible, please send the finalized spreadsheet or confirm the numbers by next Monday so we can proceed with the quarterly report.\\n\\nRegards,\\nGaurav\"\n}\n\nInput data (missing recipient/email):\nkeyPoints: \"invoice overdue, request payment status\"\ntone: \"formal\"\n\nOutput (single JSON):\n{\n  \"subject\":\"Outstanding Invoice — Payment Status Request\",\n  \"body\":\"Hello,\\n\\nI am writing regarding an outstanding invoice that appears to be overdue. Could you please confirm the current payment status and let me know if any additional documentation is required to process this payment?\\n\\nIf you could provide an update or an expected payment date, that would be appreciated.\\n\\nRegards,\\n[Your Name]\"\n}\n",
+              "role": "system"
+            },
+            {
+              "content": "=={{ JSON.stringify({\n    recipientName: $json.parsed?.data?.recipientName,\n    recipientEmail: $json.emailContact || $json.parsed?.data?.recipientEmail,\n    subjectHint: $json.parsed?.data?.subject,\n    keyPoints: $json.parsed?.data?.mainPoints\n}) }}\n"
+            }
+          ]
+        },
+        "options": {},
+        "requestOptions": {}
+      },
+      "id": "9b3c215f-be68-4f7b-aa66-95247b122245",
+      "name": "Generate Email",
+      "type": "n8n-nodes-base.perplexity",
+      "typeVersion": 1,
+      "position": [
+        -2624,
+        352
+      ],
+      "credentials": {
+        "perplexityApi": {
+          "id": "yimrtEMyqqbgU4bi",
+          "name": "Perplexity account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "subject",
+              "value": "={{ JSON.parse($json.choices[0].message.content).subject }}"
+            },
+            {
+              "name": "body",
+              "value": "={{ JSON.parse($json.choices[0].message.content).body }}"
+            },
+            {
+              "name": "toList",
+              "value": "={{ [$json.emailContact] }}"
+            },
+            {
+              "name": "chatId",
+              "value": "={{ $node[\"Parse Intent\"].json.chatId }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ba2e2f11-f062-4edf-9f32-78f88fc0183b",
+      "name": "Parse Email JSON",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        -2320,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "subject": "={{ $json.subject || 'Automated Email' }}",
+        "message": "={{ $json.body || '' }}",
+        "toList": [
+          "=={{ $json.toList || [] }}\n",
+          "007gouravjha@gmail.com"
+        ],
+        "additionalFields": {}
+      },
+      "id": "3ed0936e-de5a-489f-9237-4e984d4edf9e",
+      "name": "Gmail Send",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 1,
+      "position": [
+        -2064,
+        352
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "8Z4trTUrvyKHEAzp",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "683340074",
+        "text": "=={{ \n`This Email Was Sent:\n\nTo: ${$item(0).$node[\"Parse Email JSON\"].json.toList[0]}\nSubject: ${$item(0).$node[\"Parse Email JSON\"].json.subject}\nBody:\n${$item(0).$node[\"Parse Email JSON\"].json.body}\n` \n}}\n",
+        "additionalFields": {}
+      },
+      "id": "4bb544a1-757d-4efd-8bdb-78fc4fb0ea24",
+      "name": "Reply to Telegram (Email)",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        -1792,
+        352
+      ],
+      "webhookId": "eb2c69d4-97fc-4425-948b-6d6810fab2e6",
+      "credentials": {
+        "telegramApi": {
+          "id": "boyfGomCzAhBUtUn",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "messages": {
+          "message": [
+            {
+              "content": "You are a modern, articulate personal assistant. \nRespond with clarity, insight, and natural conversational flow. \nAvoid generic filler. Be concise when appropriate and more detailed when the user needs depth. \nMaintain a calm, polished tone—confident but not arrogant, helpful without being clingy.\n\nAdapt to the user's intent:\n- If they are asking for information, give precise, structured answers.\n- If they are thinking through something, provide reasoning or alternatives.\n- If they sound confused, clarify without dumbing things down.\n- If they are exploring ideas, expand intelligently and offer useful angles.\n\nNever write like a template chatbot. \nNo “As an AI model,” no fake friendliness, no corporate fluff.\nBe direct, thoughtful, and genuinely useful.\n",
+              "role": "system"
+            },
+            {
+              "content": "={{ $json.parsed.data.text || $json.transcript || $json.text || '' }}"
+            }
+          ]
+        },
+        "options": {},
+        "requestOptions": {}
+      },
+      "id": "70d39009-b274-4ca7-bba2-d8cf0cdb2ec5",
+      "name": "General Chat",
+      "type": "n8n-nodes-base.perplexity",
+      "typeVersion": 1,
+      "position": [
+        -2624,
+        656
+      ],
+      "credentials": {
+        "perplexityApi": {
+          "id": "yimrtEMyqqbgU4bi",
+          "name": "Perplexity account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "683340074",
+        "text": "={{ $json.choices && $json.choices[0] && $json.choices[0].message ? $json.choices[0].message.content : 'Reply generated.' }}",
+        "additionalFields": {}
+      },
+      "id": "1031f8f1-0b67-482e-afe4-c39dbe139fa2",
+      "name": "Reply to Telegram (Chat)",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        -1776,
+        656
+      ],
+      "webhookId": "a64e7741-e3ce-4483-9254-b877355942cf",
+      "credentials": {
+        "telegramApi": {
+          "id": "boyfGomCzAhBUtUn",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "call",
+        "from": "+1 978 754 6188",
+        "to": "+919315223704",
+        "twiml": "=={{ $json.twiml }}\n",
+        "message": "=url = https://n8n-automation-toolkit.onrender.com/webhook-test/twilio_voice",
+        "options": {}
+      },
+      "id": "9cd76c28-aad8-426e-a85e-82ab948e6657",
+      "name": "Twilio Call1",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        -2064,
+        -544
+      ],
+      "credentials": {
+        "twilioApi": {
+          "id": "VxgPA3cWlXdMBbhL",
+          "name": "Twilio account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "messages": {
+          "message": [
+            {
+              "content": "You generate concise, high-quality summaries of completed phone calls. \nWrite 2–3 sentences that capture:\n- the call outcome or status (connected, missed, voicemail, completed, etc.)\n- any meaningful details exchanged during the call\n- any next steps or follow-up actions if mentioned\n\nKeep the tone clear, professional, and neutral. \nDo not add invented details. \nDo not mention that you are an AI. \nReturn plain text only, no formatting or metadata.\n",
+              "role": "system"
+            },
+            {
+              "content": "={{JSON.stringify($json)}}"
+            }
+          ]
+        },
+        "options": {},
+        "requestOptions": {}
+      },
+      "id": "87054cb5-197f-40ee-8766-134b448769b3",
+      "name": "Summarize Call1",
+      "type": "n8n-nodes-base.perplexity",
+      "typeVersion": 1,
+      "position": [
+        -2128,
+        -240
+      ],
+      "credentials": {
+        "perplexityApi": {
+          "id": "yimrtEMyqqbgU4bi",
+          "name": "Perplexity account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6a5221b2-95f6-4b4b-bb39-b0452d26623c",
+              "name": "rem.title",
+              "value": "={{ JSON.parse($json.choices[0].message.content).title }}",
+              "type": "string"
+            },
+            {
+              "id": "779381a3-549e-418b-af46-3fd23f736b75",
+              "name": "rem.dateTime",
+              "value": "={{ JSON.parse($json.choices[0].message.content).dateTime }}",
+              "type": "string"
+            },
+            {
+              "id": "1a8df8eb-a0c0-4a83-bd31-ceb379a7d760",
+              "name": "rem.description",
+              "value": "={{ JSON.parse($json.choices[0].message.content).description }}",
+              "type": "string"
+            },
+            {
+              "id": "794559af-0e05-4616-97fb-4c8e87a7c42a",
+              "name": "chatId",
+              "value": "={{ $node[\"Parse Intent\"].json.chatId }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -2384,
+        -16
+      ],
+      "id": "60ac47a1-32fd-4581-816f-4e8cfc2c2377",
+      "name": "PARSE REMINDER"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f8b3d908-6645-40b5-888c-da6fa71ed25e",
+              "leftValue": "={{ $json.rem.dateTime }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": "={{ true }}",
+        "options": {
+          "ignoreCase": true
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -2224,
+        -16
+      ],
+      "id": "30edeb44-55c1-4435-a560-09738111de03",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "=I need a date/time to set the reminder",
+        "additionalFields": {}
+      },
+      "id": "db22862a-ba45-4612-a654-e401fd91da88",
+      "name": "Reply to Telegram (Reminder)1",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        -1792,
+        160
+      ],
+      "webhookId": "c9828550-f388-4357-93a4-423b7f6fa3ec",
+      "credentials": {
+        "telegramApi": {
+          "id": "boyfGomCzAhBUtUn",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "THIS WORKS\n",
+        "height": 80,
+        "width": 256
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1584,
+        64
+      ],
+      "typeVersion": 1,
+      "id": "7997ab20-d9bb-4d9c-81be-63a20c5d1144",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "THIS WORKS\n",
+        "height": 80
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1552,
+        640
+      ],
+      "typeVersion": 1,
+      "id": "2e66a4b9-520b-48ff-8598-e9814fa70eba",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "Tested\n",
+        "height": 80
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1568,
+        -224
+      ],
+      "typeVersion": 1,
+      "id": "fa83c993-38de-4bb1-831a-e4eae93614dd",
+      "name": "Sticky Note4",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "content": "Works\n",
+        "height": 80
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1568,
+        400
+      ],
+      "typeVersion": 1,
+      "id": "3f06b936-5712-493c-9bdc-1ae79aaf9fb8",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Contact dictionary\nconst contacts = {\n  \"gaurav\": \"007gouravjha@gmail.com\",\n  \"aman\": \"amanupadhyay1211@gmail.com\"\n};\n\n// Safely extract recipientName from parsed intent\nconst rawName =\n  $json?.parsed?.data?.recipientName ||\n  $json?.recipientName ||\n  \"\";\n\n// Normalize for matching\nconst name = String(rawName).toLowerCase().trim();\n\n// Try exact match\nlet email = contacts[name] || null;\n\n// Try partial match if exact fails\nif (!email && name.length > 0) {\n  for (const key of Object.keys(contacts)) {\n    if (name.includes(key)) {\n      email = contacts[key];\n      break;\n    }\n  }\n}\n\n// Return original JSON + mapped emailContact\nreturn [\n  {\n    json: {\n      ...$json,          // ← preserve all upstream fields\n      recipientName: name || null,\n      emailContact: email\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2848,
+        176
+      ],
+      "id": "b530df97-1557-4e82-a980-564875bf4463",
+      "name": "Map Email Contact"
+    },
+    {
+      "parameters": {
+        "content": "The Whole pre data \nrequirement works good",
+        "height": 80,
+        "width": 752
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -4400,
+        -496
+      ],
+      "typeVersion": 1,
+      "id": "acec348b-788b-4aa0-9303-da0c58a4bd2d",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "jsCode": "for (const item of items) {\n    if (!item.binary || !item.binary.data) continue;\n\n    item.binary.data.mimeType = \"audio/ogg\";\n    item.binary.data.fileExtension = \"ogg\";\n}\n\nreturn items;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3984,
+        -208
+      ],
+      "id": "cecc1fc2-ecba-4165-9d2e-c8112c3f4070",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "jsCode": "const script = $json.choices[0].message.content;\n\nreturn [{\n  json: {\n    twiml: `<Response><Say voice=\"Polly.Joanna\">${script}</Say></Response>`\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2464,
+        -544
+      ],
+      "id": "80822147-b468-48e2-afc1-f34e5a90365d",
+      "name": "Call Intent"
+    },
+    {
+      "parameters": {
+        "jsCode": "const script = $json.callScript || \"Hello, this is an automated call.\";\n\nreturn [{\n  json: {\n    twiml: `\n<Response>\n  <Say voice=\"alice\">\n    ${script.replace(/[\\n\\r]+/g, ' ')}\n  </Say>\n  <Pause length=\"1\"/>\n  <Say voice=\"alice\">Goodbye.</Say>\n</Response>\n`\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2288,
+        -544
+      ],
+      "id": "3326c7e1-accb-438e-93cd-1378c83658fa",
+      "name": "Build TwiML"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Check Voice",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Normalize Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Voice": {
+      "main": [
+        [
+          {
+            "node": "Download Voice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Voice": {
+      "main": [
+        [
+          {
+            "node": "Download Audio File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Audio File": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribe Audio": {
+      "main": [
+        [
+          {
+            "node": "Detect Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Text": {
+      "main": [
+        [
+          {
+            "node": "Detect Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect Intent": {
+      "main": [
+        [
+          {
+            "node": "Parse Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Intent": {
+      "main": [
+        [
+          {
+            "node": "Route Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Intent": {
+      "main": [
+        [
+          {
+            "node": "Generate Call Script",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Reminder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Map Email Contact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "General Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Call Script": {
+      "main": [
+        [
+          {
+            "node": "Call Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Reminder": {
+      "main": [
+        [
+          {
+            "node": "PARSE REMINDER",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Calendar Event": {
+      "main": [
+        [
+          {
+            "node": "Reply to Telegram (Reminder)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Email": {
+      "main": [
+        [
+          {
+            "node": "Parse Email JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Email JSON": {
+      "main": [
+        [
+          {
+            "node": "Gmail Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail Send": {
+      "main": [
+        [
+          {
+            "node": "Reply to Telegram (Email)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "General Chat": {
+      "main": [
+        [
+          {
+            "node": "Reply to Telegram (Chat)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Twilio Call1": {
+      "main": [
+        [
+          {
+            "node": "Summarize Call1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize Call1": {
+      "main": [
+        [
+          {
+            "node": "Reply to Telegram (Call)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PARSE REMINDER": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply to Telegram (Reminder)": {
+      "main": [
+        []
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Create Calendar Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply to Telegram (Reminder)1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map Email Contact": {
+      "main": [
+        [
+          {
+            "node": "Generate Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Transcribe Audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Intent": {
+      "main": [
+        [
+          {
+            "node": "Build TwiML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build TwiML": {
+      "main": [
+        [
+          {
+            "node": "Twilio Call1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a02ddbf4-1cab-406e-a6a9-62b45d263386",
+  "meta": {
+    "instanceId": "4ea50b59b8b6e7339950fb23df8fcc4a454f8fd6e2ec061e86f15d864b64699a"
+  },
+  "id": "MFCbJCy19rzeMCEA",
+  "tags": []
+}

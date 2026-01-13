@@ -1,0 +1,647 @@
+{
+  "name": "Gmail AI Assistant V1 - Fixed",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {}
+      },
+      "id": "0faa2c2d-e59b-4f3b-bae1-2fc67d0f4b8c",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2096,
+        -496
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YvGyr1IoX7A8yTdy",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const email = items[0].json;\n\nreturn [{\n  json: {\n    id: email.id || \"\",\n    from: email.From || \"\",\n    subject: email.Subject || \"\",\n    to: email.To || \"\",\n    snippet: email.snippet || \"\",\n    threadId: email.threadId || email.id || \"\"\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1872,
+        -496
+      ],
+      "id": "b47ade7e-13ec-44f2-930e-3fbb155adf24",
+      "name": "Extract Metadata"
+    },
+    {
+      "parameters": {
+        "jsCode": "const email = items[0].json;\n\nconst from = email.from || \"\";\nconst subject = email.subject || \"\";\nconst to = email.to || \"\";\nconst bodyText = email.snippet || \"\";\nconst hasAttachments = false;\nconst threadLength = email.threadId || \"\";\nconst isDirectRecipient = to.toLowerCase().includes(\"gaurav\");\n\nconst systemPrompt = `\nYou are an email-classification engine for an automated Gmail assistant.\nYour job is to analyze the incoming email and return STRICT JSON ONLY, no explanations, no prose.\n\n{\n  \"importance\": \"high\" | \"medium\" | \"low\",\n  \"intent\": \"meeting_request\" | \"question\" | \"file_request\" | \"update_request\" | \"spam\" | \"unknown\",\n  \"safe_to_reply\": true | false,\n  \"draft_reply\": \"short professional reply or empty string\"\n}\n\n========================\nIMPORTANCE RULES\n========================\n\nHIGH if ANY are true:\n- Mentions time or date\n- Deadline within 72 hours\n- Urgent keywords: urgent, asap, immediately, priority, important, deadline\n- User is in the \"To\" field\n- Quick approval or meeting required\n\nMEDIUM:\n- Requires a reply but not urgent\n- Normal question or request\n- Asking for a file or update\n\nLOW:\n- Newsletter, promotions, automated or irrelevant\n\n========================\nSAFETY RULES\n========================\n\nsafe_to_reply = false AND draft_reply = \"\" for:\n- HR/legal/contract/payroll/banking/OTP/password\n- Anything suspicious/phishy\n\n========================\nDRAFT REPLY RULES\n========================\n\nAlways create a short, professional, polite reply based on the intent.\n\nGeneral tone:\n- Clear\n- Formal\n- Cooperative\n- 1-3 sentences max\n- No emojis\n- No fluff\n\nExamples by intent:\n\nmeeting_request:\n- \"Thanks for reaching out. Let me know your preferred time and I'll confirm.\"\n- \"I can do tomorrow. Please suggest a time slot.\"\n\nquestion:\n- \"I'll check and get back to you shortly.\"\n- \"Sure, let me clarify this and update you.\"\n\nfile_request:\n- \"I'll send the document shortly.\"\n- \"Thanks for the request. I'm preparing the file now.\"\n\nupdate_request:\n- \"Let me check the status and update you soon.\"\n- \"I'll review the progress and get back to you today.\"\n\nunknown:\n- \"Got your message. I'll take a look and respond soon.\"\n\nIMPORTANT:\nIf safe_to_reply = false → draft_reply = \"\"\n`;\n\nconst userPrompt = `\nSubject: ${subject}\nFrom: ${from}\nTo: ${to}\nDirect recipient: ${isDirectRecipient}\nThread length: ${threadLength}\nHas attachments: ${hasAttachments}\n\nBody:\n${bodyText}\n`;\n\nreturn [{\n  json: {\n    systemPrompt,\n    userPrompt,\n    emailData: email\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1632,
+        -496
+      ],
+      "id": "dab827ed-5fd5-44c5-81e8-d45d6304d83b",
+      "name": "Prepare AI Prompt"
+    },
+    {
+      "parameters": {
+        "messages": {
+          "message": [
+            {
+              "content": "={{$json.systemPrompt}}",
+              "role": "system"
+            },
+            {
+              "content": "={{$json.userPrompt}}"
+            }
+          ]
+        },
+        "options": {},
+        "requestOptions": {}
+      },
+      "type": "n8n-nodes-base.perplexity",
+      "typeVersion": 1,
+      "position": [
+        -1392,
+        -496
+      ],
+      "id": "387dec53-d39f-4686-80c2-94dd269354b6",
+      "name": "Message a model",
+      "credentials": {
+        "perplexityApi": {
+          "id": "RlnvB9Nz3mMB0H0l",
+          "name": "Perplexity account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = items[0].json;\nconst promptData = $items('Prepare AI Prompt')[0].json;\n\nlet content = raw.choices?.[0]?.message?.content || \"{}\";\nlet data;\n\ntry {\n  data = JSON.parse(content);\n} catch (_) {\n  data = {};\n}\n\nreturn [{\n  json: {\n    importance: data.importance || \"low\",\n    intent: data.intent || \"unknown\",\n    safe_to_reply: data.safe_to_reply === true,\n    draft_reply: data.draft_reply || \"\",\n    messageId: promptData.emailData.id,\n    from: promptData.emailData.from,\n    subject: promptData.emailData.subject,\n    to: promptData.emailData.to,\n    snippet: promptData.emailData.snippet\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1152,
+        -496
+      ],
+      "id": "851ba9cf-0260-418d-9144-215bedb47a9c",
+      "name": "Extract Classification"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $getWorkflowStaticData('global');\nconst email = $json;\n\ndata.lastEmail = {\n  messageId: email.messageId,\n  from: email.from,\n  subject: email.subject,\n  to: email.to,\n  snippet: email.snippet,\n  importance: email.importance,\n  intent: email.intent,\n  safe_to_reply: email.safe_to_reply,\n  draft_reply: email.draft_reply\n};\n\nreturn items;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -912,
+        -496
+      ],
+      "id": "df9c3df4-4df0-4973-813e-e2e7b7d86009",
+      "name": "Store Email Context"
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{$json.importance}}",
+        "rules": {
+          "rules": [
+            {
+              "value2": "high"
+            },
+            {
+              "value2": "medium",
+              "output": 1
+            }
+          ]
+        },
+        "fallbackOutput": 2
+      },
+      "id": "8a0efae3-502b-47b9-ac22-6797aebd9668",
+      "name": "Switch Importance",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        -672,
+        -496
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "683340074",
+        "text": "=HIGH Priority Email\n\nFrom: {{$json.from}}\nSubject: {{$json.subject}}\nIntent: {{$json.intent}}\n\nSnippet:\n{{$json.snippet}}\n\nDraft Reply:\n{{$json.draft_reply}}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "Approve",
+                    "additionalFields": {
+                      "callback_data": "=callback_data: =approve_{{$json.messageId}}\n"
+                    }
+                  },
+                  {
+                    "text": "Edit",
+                    "additionalFields": {
+                      "callback_data": "=edit_{{$json.messageId}}"
+                    }
+                  },
+                  {
+                    "text": "Ignore",
+                    "additionalFields": {
+                      "callback_data": "=ignore_{{$json.messageId}}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {}
+      },
+      "id": "2df7247f-e2e9-422c-be80-784a258d9216",
+      "name": "Telegram Notify High",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        -432,
+        -608
+      ],
+      "webhookId": "7753021d-c8c9-45df-90d8-06dc7ce28d3d",
+      "credentials": {
+        "telegramApi": {
+          "id": "59UCi4skYXxH83SS",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "683340074",
+        "text": "=MEDIUM Priority Email\n\nFrom: {{$json.from}}\nSubject: {{$json.subject}}\nIntent: {{$json.intent}}\n\nSnippet:\n{{$json.snippet}}\n\nDraft Reply:\n{{$json.draft_reply}}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "Approve",
+                    "additionalFields": {
+                      "callback_data": "=callback_data: =approve_{{$json.messageId}}\n"
+                    }
+                  },
+                  {
+                    "text": "Edit",
+                    "additionalFields": {
+                      "callback_data": "=edit_{{$json.messageId}}"
+                    }
+                  },
+                  {
+                    "text": "Ignore",
+                    "additionalFields": {
+                      "callback_data": "=ignore_{{$json.messageId}}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {}
+      },
+      "id": "873d870d-0ef0-463e-8712-4e5b184af9ca",
+      "name": "Telegram Notify Medium",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        -432,
+        -448
+      ],
+      "webhookId": "telegram-medium-webhook",
+      "credentials": {
+        "telegramApi": {
+          "id": "59UCi4skYXxH83SS",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "updates": [
+          "callback_query"
+        ],
+        "additionalFields": {}
+      },
+      "id": "0cbdd800-59e3-4067-81e0-e4d65d266aa9",
+      "name": "Telegram Callback",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2096,
+        -48
+      ],
+      "webhookId": "24e1ad90-b02b-4937-b499-643d1eea3c6c",
+      "credentials": {
+        "telegramApi": {
+          "id": "59UCi4skYXxH83SS",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.callback_query?.data || \"\";\nconst parts = raw.split(\"|\");\n\nconst [command, messageId, from, subject, draft_reply, to] = parts;\n\nreturn [{\n  json: {\n    callback_action: command.split(\"_\")[0],\n    messageId,\n    from,\n    subject,\n    draft_reply,\n    to\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1872,
+        -48
+      ],
+      "id": "441dbf13-6134-407c-b6c5-34e458e25c71",
+      "name": "Parse Callback"
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{$json.callback_action}}",
+        "rules": {
+          "rules": [
+            {
+              "value2": "approve"
+            },
+            {
+              "value2": "edit",
+              "output": 1
+            },
+            {
+              "value2": "ignore",
+              "output": 2
+            }
+          ]
+        }
+      },
+      "id": "47389d71-9ea4-48f7-b730-1ce03331c42f",
+      "name": "Handle Callback",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        -1680,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $getWorkflowStaticData('global');\nconst email = data.lastEmail || {};\n\nreturn [{\n  json: {\n    from: email.from,\n    to: email.to,\n    subject: email.subject,\n    draft_reply: email.draft_reply,\n    messageId: email.messageId\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1392,
+        -128
+      ],
+      "id": "96a4ebcb-1866-439f-93cd-92968804b90c",
+      "name": "Build Reply"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "subject": "=Re: {{$json.subject}}\n",
+        "message": "={{$json.draft_reply}}\n",
+        "toList": [
+          "=={{$json.from}}\n"
+        ],
+        "additionalFields": {}
+      },
+      "id": "eb5600aa-deca-4adb-9428-2579b450d2f9",
+      "name": "Gmail Send Reply",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 1,
+      "position": [
+        -1152,
+        -128
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YvGyr1IoX7A8yTdy",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $getWorkflowStaticData('global');\nconst messageId = $json.messageId;\n\ndata.pendingEdit = messageId;\n\nreturn items;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1392,
+        48
+      ],
+      "id": "72d8227a-b375-407c-843f-cad9e24d11e7",
+      "name": "Store Edit Request"
+    },
+    {
+      "parameters": {
+        "chatId": "683340074",
+        "text": "Please send your edited reply:",
+        "additionalFields": {}
+      },
+      "id": "3acb33de-0c77-4d1d-bcac-72d6458cea04",
+      "name": "Ask for Edit",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        -1152,
+        48
+      ],
+      "webhookId": "5261d2dd-077e-4bad-9527-0fa1c7d03324",
+      "credentials": {
+        "telegramApi": {
+          "id": "59UCi4skYXxH83SS",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "d7f6afd2-b4dd-4ba1-9b7a-f58700236f2a",
+      "name": "Edited Text Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2096,
+        208
+      ],
+      "webhookId": "cfaf4180-50eb-4877-9a45-62cc7a25a553",
+      "credentials": {
+        "telegramApi": {
+          "id": "59UCi4skYXxH83SS",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $getWorkflowStaticData('global');\nconst email = data.lastEmail || {};\nconst editedText = $json.message?.text || \"\";\n\nreturn [{\n  json: {\n    to: email.from,\n    subject: `Re: ${email.subject}`,\n    message: editedText,\n    messageId: email.messageId\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1872,
+        208
+      ],
+      "id": "992caf3b-1a0c-47b2-8d3c-2a2298bbdadd",
+      "name": "Build Edited Reply"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "subject": "={{$json.subject}}",
+        "message": "={{$json.message}}",
+        "toList": {
+          "toList": "{{ ={{$json.to}} }}"
+        },
+        "additionalFields": {}
+      },
+      "id": "d9094dfe-8e3c-4d4c-9da4-ea3fccca4687",
+      "name": "Send Edited Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 1,
+      "position": [
+        -1632,
+        208
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YvGyr1IoX7A8yTdy",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $getWorkflowStaticData('global');\ndelete data.pendingEdit;\n\nreturn items;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1392,
+        208
+      ],
+      "id": "3bc4bb4f-8701-4ae0-be72-d26a8a47cbd1",
+      "name": "Cleanup Edit State"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Metadata": {
+      "main": [
+        [
+          {
+            "node": "Prepare AI Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare AI Prompt": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Extract Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Classification": {
+      "main": [
+        [
+          {
+            "node": "Store Email Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Email Context": {
+      "main": [
+        [
+          {
+            "node": "Switch Importance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Importance": {
+      "main": [
+        [
+          {
+            "node": "Telegram Notify High",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram Notify Medium",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Callback": {
+      "main": [
+        [
+          {
+            "node": "Parse Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Callback": {
+      "main": [
+        [
+          {
+            "node": "Handle Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Callback": {
+      "main": [
+        [
+          {
+            "node": "Build Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Store Edit Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Build Reply": {
+      "main": [
+        [
+          {
+            "node": "Gmail Send Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Edit Request": {
+      "main": [
+        [
+          {
+            "node": "Ask for Edit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edited Text Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build Edited Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Edited Reply": {
+      "main": [
+        [
+          {
+            "node": "Send Edited Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Edited Email": {
+      "main": [
+        [
+          {
+            "node": "Cleanup Edit State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "2250dc5b-0c84-4c5e-9179-f15c8eabef5b",
+  "meta": {
+    "instanceId": "303420a22a3fcf7f84f9337539aa8148960b09bfe9bd5c6e2e80be8e7f0f0e35"
+  },
+  "id": "VIOCPlOLrHXTho41",
+  "tags": []
+}

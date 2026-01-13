@@ -1,0 +1,257 @@
+{
+  "name": "Smart Stock Insight Telegram Bot",
+  "nodes": [
+    {
+      "parameters": {
+        "messages": {
+          "message": [
+            {
+              "content": "={{$json[\"prompt\"]}}"
+            }
+          ]
+        },
+        "options": {},
+        "requestOptions": {}
+      },
+      "name": "Message a model1",
+      "type": "n8n-nodes-base.perplexity",
+      "typeVersion": 1,
+      "position": [
+        1296,
+        1056
+      ],
+      "id": "1c9d7d20-04d4-4056-bdec-829cbde24895",
+      "credentials": {
+        "perplexityApi": {
+          "id": "Ed00XMd5mhBwF6aL",
+          "name": "Perplexity account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1,
+      "position": [
+        160,
+        1104
+      ],
+      "id": "590e2786-6ffe-40d8-9c2b-4f59a9b8f948",
+      "webhookId": "582fc97a-7bfc-4eb0-8cf5-ff8447d7fb8c",
+      "credentials": {
+        "telegramApi": {
+          "id": "JB9akPQnkb3ZOpwI",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://query1.finance.yahoo.com/v8/finance/chart/{{$json[\"message\"][\"text\"]}}?interval=1d&range=1mo",
+        "options": {}
+      },
+      "name": "Yahoo Finance Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        464,
+        992
+      ],
+      "id": "490392e3-eccd-4cfd-bd95-6e0e9c9ac6cd"
+    },
+    {
+      "parameters": {
+        "url": "=https://newsdata.io/api/1/news?apikey=pub_400408ab28ff4e9ab4face48f37c7a8a&q={{$json[\"message\"][\"text\"]}}&language=en",
+        "options": {}
+      },
+      "name": "Fetch News",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        464,
+        1200
+      ],
+      "id": "8c4b2839-f601-4515-af3e-47494220eb66"
+    },
+    {
+      "parameters": {
+        "chatId": "={{$node[\"Code in JavaScript1\"].json[\"chatId\"]}}",
+        "text": "={{$json[\"choices\"][0][\"message\"][\"content\"]}}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "name": "Send Telegram Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        1584,
+        1168
+      ],
+      "id": "15b58fa4-af17-4978-863f-edb19655d865",
+      "webhookId": "5ec5170c-7515-4a84-9479-eb1846256887",
+      "credentials": {
+        "telegramApi": {
+          "id": "JB9akPQnkb3ZOpwI",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// items[0] = Yahoo Finance Data\n// items[1] = Fetch News\n// items[2] = Edit Fields (chatId info)\n\nconst stock = items[0]?.json || {};\nconst news = items[1]?.json || {};\nconst chat = items[2]?.json || {};\nconst chatId = chat?.chatId || null;\n\nif (stock.fallback) {\n  return [{\n    json: {\n      chatId,\n      prompt: `No valid data found for ${stock.symbol}. Please try another ticker symbol.`\n    }\n  }];\n}\n\nconst headlines = news.results?.slice(0, 3).map(n => n.title).join('; ') || \"No recent headlines.\";\n\nconst promptText = `Summarize the 1-month stock trend for ${stock.symbol || 'N/A'} (${stock.currency || 'N/A'}), which moved ${stock.trend || 'N/A'}, change: ${stock.diff || 'N/A'} (${stock.pct || 'N/A'}%). Include recent headlines: ${headlines}. Reply in 2-3 lines in Markdown.`;\n\nreturn [{\n  json: {\n    chatId,\n    prompt: promptText\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        1232
+      ],
+      "id": "22f334c8-b9e2-4fa2-8a58-e868a6358dc4",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "8bf7784e-d663-4aa6-9bba-478301b9efbb",
+              "name": "chatId",
+              "value": "={{$json[\"message\"][\"chat\"][\"id\"]}}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        464,
+        1376
+      ],
+      "id": "e23ff0d8-5998-4c7a-aefb-db32030447a0",
+      "name": "Edit Fields1"
+    },
+    {
+      "parameters": {
+        "numberInputs": 3
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        912,
+        1024
+      ],
+      "id": "a7922db5-60d4-4bd2-a6c5-d871c96d7b82",
+      "name": "Merge"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Message a model1": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Yahoo Finance Data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch News",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Yahoo Finance Data": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch News": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Message a model1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "2f514bae-ac94-4ede-90be-fd73cfbfbf7c",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "b134fa8fee7a66e3e6c60ede85a6a48ef1d659a45af980f315e08b32e17f7e41"
+  },
+  "id": "buI0WKhpIniHWvcQ",
+  "tags": []
+}

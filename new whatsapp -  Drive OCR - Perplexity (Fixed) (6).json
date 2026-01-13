@@ -1,0 +1,627 @@
+{
+  "name": "whatsapp -  Drive OCR + Perplexity (Fixed)",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "messages"
+        ],
+        "options": {}
+      },
+      "type": "n8n-nodes-base.whatsAppTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2816,
+        208
+      ],
+      "id": "1edca117-fc9d-4de5-83a2-e7ad8825e128",
+      "name": "WhatsApp Trigger",
+      "webhookId": "97c7b392-4a6e-41bc-9526-44887749c01f",
+      "credentials": {
+        "whatsAppTriggerApi": {
+          "id": "MDUIxPz3ILGXdZQh",
+          "name": "WhatsApp OAuth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "930828006776104",
+        "recipientPhoneNumber": "={{ $json.messages[0].from }}",
+        "textBody": "Not An Image of a bill",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        -2384,
+        464
+      ],
+      "id": "ef822ae9-23b9-4572-9ac9-ef2bc63c0188",
+      "name": "Send message",
+      "webhookId": "5c07ae7e-ac8f-49ce-a20d-019259f248db",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "eB5fDxHdpy8pRn6A",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.messages[0].image.mime_type }}",
+              "value2": "=image/jpeg"
+            }
+          ]
+        }
+      },
+      "id": "62bca12a-1a4f-4f93-8d4c-0136712a7fbb",
+      "name": "Filter Only Images",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -2608,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "name": "=receipt_{{ $json.userId || 'anon' }}_{{ $now.format('yyyy-MM-dd_HHmmss') }}.jpg",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list"
+        },
+        "folderId": {
+          "__rl": false,
+          "value": "1btgJJTa_rvpVTKtDw34iZdIBnlOnibjT",
+          "mode": "list"
+        },
+        "options": {}
+      },
+      "id": "ab5f25a1-2ccb-49d6-85c1-6d5d793fdddb",
+      "name": "Upload to Google Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -1744,
+        208
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "mpMnR8Ft1TAt6AuS",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Safely extract parsed OCR text\nlet parsed = \"\";\n\ntry {\n  parsed = $json.ParsedResults[0].ParsedText || \"\";\n} catch (e) {\n  parsed = \"\";\n}\n\nreturn [\n  {\n    json: {\n      ocr_text: parsed.trim()\n    }\n  }\n];\n"
+      },
+      "id": "3b89059d-a3eb-442d-bfa2-d0b823f3f274",
+      "name": "Prepare OCR Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1280,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "messages": {
+          "message": [
+            {
+              "content": "You are an extraction assistant. Receive OCR text from a receipt and return ONLY a valid JSON object following this schema:\\n{\\n  \"store_name\": \"string\",\\n  \"total_amount\": number,\\n  \"currency\": \"string (ISO code or UNKNOWN)\",\\n  \"date\": \"YYYY-MM-DD or empty string\",\\n  \"category\": \"string (groceries, dining, shopping, transportation, utilities, healthcare, entertainment, other)\",\\n  \"items\": [\"array of item names\"],\\n  \"payment_method\": \"string (cash, card, online, or unknown)\",\\n  \"tax_amount\": number,\\n  \"notes\": \"string\"\\n}\\nRules: Output ONLY the JSON object (no explanation). If a field is not present, use sensible defaults (total_amount: 0, currency: 'UNKNOWN', date: today in YYYY-MM-DD if not inferable, items: []). Avoid inventing unrealistic values.",
+              "role": "system"
+            },
+            {
+              "content": "=You will be given raw OCR text extracted from a receipt:\n\n{{ $json.ocr_text }}\n\nFollow the schema below and return ONLY valid JSON:\n\n{\n  \"store_name\": \"string\",\n  \"total_amount\": number,\n  \"currency\": \"string\",\n  \"date\": \"YYYY-MM-DD or empty string\",\n  \"category\": \"string\",\n  \"items\": [\"array\"],\n  \"payment_method\": \"string\",\n  \"tax_amount\": number,\n  \"notes\": \"string\"\n}\n"
+            }
+          ]
+        },
+        "options": {},
+        "requestOptions": {}
+      },
+      "id": "c477b59f-fab9-4879-b2a0-44b10be1d31c",
+      "name": "Perplexity - Extract Structured Data",
+      "type": "n8n-nodes-base.perplexity",
+      "typeVersion": 1,
+      "position": [
+        -1072,
+        208
+      ],
+      "credentials": {
+        "perplexityApi": {
+          "id": "1MLV5A0eeLZ6Xid8",
+          "name": "Perplexity account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// --- Parse Perplexity structured JSON ---\nlet data = {};\n\ntry {\n  const raw = $json.choices?.[0]?.message?.content;\n  if (raw) {\n    data = JSON.parse(raw);\n  }\n} catch (e) {\n  data = {};\n}\n\n// --- Create standardized output ---\nconst cleaned = {\n  store_name: data.store_name || \"Unknown\",\n  total_amount: Number(data.total_amount || 0),\n  currency: data.currency || \"UNKNOWN\",\n  date: data.date || \"\",\n  category: data.category || \"other\",\n  items: Array.isArray(data.items) ? data.items.join(\", \") : \"\",\n  payment_method: data.payment_method || \"unknown\",\n  tax_amount: Number(data.tax_amount || 0),\n  notes: data.notes || \"\"\n};\n\nreturn [{ json: cleaned }];"
+      },
+      "id": "e281c45b-8cdc-447b-9bd5-5d459ba27556",
+      "name": "Clean & Standardize Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -864,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1ML8lFZOdPbEMiO04YyON6y9517tD7DMGUFAhMEGqPx4",
+          "mode": "list",
+          "cachedResultName": "Reciepts_analyzed_Data",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ML8lFZOdPbEMiO04YyON6y9517tD7DMGUFAhMEGqPx4/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ML8lFZOdPbEMiO04YyON6y9517tD7DMGUFAhMEGqPx4/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "store_name",
+              "displayName": "store_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "total_amount",
+              "displayName": "total_amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "currency",
+              "displayName": "currency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "items",
+              "displayName": "items",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "payment_method",
+              "displayName": "payment_method",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "tax_amount",
+              "displayName": "tax_amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "notes",
+              "displayName": "notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "5c637af2-2fc1-4e57-b688-a448afb6adf6",
+      "name": "Append to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        -656,
+        208
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "oWFXaeukwsRUiiAA",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "messages": {
+          "message": [
+            {
+              "content": "You generate clear, friendly WhatsApp confirmation messages for processed receipts.\nWrite in plain text only.\nDo not use markdown, emojis, or bullet symbols.\nKeep it concise but informative.\n",
+              "role": "system"
+            },
+            {
+              "content": "=Using the receipt data below, write a clear WhatsApp message confirming that the receipt was processed.\n\nInclude:\n- Store name\n- Date (if available)\n- Total amount with currency\n- Category\n- Payment method\n- Tax amount (if > 0)\n- A short list of items (if available)\n\nReceipt data:\nStore: {{ $json.store_name }}\nDate: {{ $json.date || \"unknown\" }}\nTotal: {{ $json.total_amount }} {{ $json.currency }}\nCategory: {{ $json.category }}\nItems: {{ $json.items || \"not listed\" }}\nPayment method: {{ $json.payment_method }}\nTax: {{ $json.tax_amount }}\n\nEnd with a short confirmation line saying the data has been saved.\n"
+            }
+          ]
+        },
+        "options": {},
+        "requestOptions": {}
+      },
+      "type": "n8n-nodes-base.perplexity",
+      "typeVersion": 1,
+      "position": [
+        -432,
+        208
+      ],
+      "id": "5e336166-d57d-4560-8389-ccec1e14eb01",
+      "name": "Generate summary",
+      "credentials": {
+        "perplexityApi": {
+          "id": "1MLV5A0eeLZ6Xid8",
+          "name": "Perplexity account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.ocr.space/parse/image",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "K85191174988957"
+            },
+            {
+              "name": "language",
+              "value": "eng"
+            },
+            {
+              "name": "filetype",
+              "value": "=JPG"
+            },
+            {
+              "name": "scale",
+              "value": "true"
+            },
+            {
+              "name": "istable",
+              "value": "true"
+            },
+            {
+              "name": "OCREngine",
+              "value": "2"
+            },
+            {
+              "name": "url",
+              "value": "={{ $json.webContentLink }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -1536,
+        208
+      ],
+      "id": "6426b770-a806-4633-b636-ee7adea9ae24",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "=930828006776104",
+        "recipientPhoneNumber": "={{ $('WhatsApp Trigger').item.json.messages[0].from }}",
+        "textBody": "={{ $json.choices[0].message.content }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        -192,
+        224
+      ],
+      "id": "33941212-faeb-4ffc-bc50-e530aa774437",
+      "name": "send whatsapp reply",
+      "webhookId": "c421a84e-e158-4cef-961c-3c717d2b7a4e",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "eB5fDxHdpy8pRn6A",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6029ae9f-cc24-45f7-9622-701835f01077",
+              "name": "sender",
+              "value": "={{ $json.messages[0].from }}",
+              "type": "string"
+            },
+            {
+              "id": "d84d9ae2-6cd0-41fe-bd52-a38ac9054849",
+              "name": "media_id",
+              "value": "={{ $json.messages[0].image.id || $json.messages[0].document.id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -2368,
+        192
+      ],
+      "id": "3278c5ae-4a60-4cef-85ff-cfcc1081888e",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.facebook.com/v19.0/{{ $json.media_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -2192,
+        192
+      ],
+      "id": "3cee9c5a-6f32-4597-9a00-dffb910ec7ef",
+      "name": "HTTP Request1",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "CS6YpeSIt2On409r",
+          "name": "Bearer Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -2000,
+        192
+      ],
+      "id": "930e254e-4a9b-4c6d-a241-57ecae84b023",
+      "name": "HTTP Request2",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "CS6YpeSIt2On409r",
+          "name": "Bearer Auth account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "WhatsApp Trigger": {
+      "main": [
+        [
+          {
+            "node": "Filter Only Images",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send message": {
+      "main": [
+        []
+      ]
+    },
+    "Filter Only Images": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to Google Drive": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare OCR Text": {
+      "main": [
+        [
+          {
+            "node": "Perplexity - Extract Structured Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Perplexity - Extract Structured Data": {
+      "main": [
+        [
+          {
+            "node": "Clean & Standardize Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean & Standardize Data": {
+      "main": [
+        [
+          {
+            "node": "Append to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append to Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Generate summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate summary": {
+      "main": [
+        [
+          {
+            "node": "send whatsapp reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Prepare OCR Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request2": {
+      "main": [
+        [
+          {
+            "node": "Upload to Google Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "9436bd0f-5a4c-4757-b5d9-541442e79de0",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "b51a1cc58b05b0d2c79bfce1682e654d580304bbd05246cf8b98d60c19d3c850"
+  },
+  "id": "vGSA5k1ygvNXCdkH",
+  "tags": []
+}

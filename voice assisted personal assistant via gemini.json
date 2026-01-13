@@ -1,0 +1,876 @@
+{
+  "name": "AI Assistant (Fixed)",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "bb258ba1-a758-450e-94c6-a7cfda2046f1",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -400,
+        280
+      ],
+      "webhookId": "58acc641-ba01-4524-8fa7-4e89d7520ccc",
+      "credentials": {
+        "telegramApi": {
+          "id": "boyfGomCzAhBUtUn",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ !!$json.message.voice }}",
+              "operation": "true"
+            }
+          ]
+        }
+      },
+      "id": "3c26ebe0-a501-4944-9e28-5cd239ddf8a3",
+      "name": "Check Voice",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -180,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $json.message.voice.file_id }}",
+        "additionalFields": {}
+      },
+      "id": "1e3609ed-70b6-4e2a-8f7b-bd63dc8eb2d3",
+      "name": "Download Voice",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        40,
+        180
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "boyfGomCzAhBUtUn",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/file/bot{{ $env.TELEGRAM_BOT_TOKEN }}/{{ $json.result.file_path }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "7e0d03ec-d1c3-4be7-8a30-c08cf5384ede",
+      "name": "Download Audio File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "operation": "transcribe",
+        "binaryPropertyName": "data",
+        "options": {
+          "prompt": "Transcribe this voice message accurately."
+        }
+      },
+      "id": "f5e5e668-8b08-43b5-801d-3f4fbf3285dd",
+      "name": "Transcribe Audio",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        480,
+        180
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "5wRLglZt39yzzKhz",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst trigger = $('Telegram Trigger').first().json;\n\nlet text = '';\nlet chatId = trigger.message.chat.id;\n\n// Check if we have transcribed text from voice\nif (items[0].json.text) {\n  text = items[0].json.text;\n} \n// Otherwise get text message\nelse if (trigger.message && trigger.message.text) {\n  text = trigger.message.text;\n}\n\nreturn [{ json: { text, chatId } }];"
+        },
+        "id": "9b765217-85d5-4937-864c-7dfa7c77ab1c",
+        "name": "Normalize Text",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          700,
+          280
+        ]
+      },
+    {
+      "parameters": {
+        "model": "llama-3.1-sonar-small-128k-online",
+        "messages": {
+          "values": [
+            {
+              "content": "You are an intent classifier for a personal assistant. Analyze the user's message and return ONLY valid JSON with this exact structure:\n\n{\"intent\":\"CALL|REMINDER|EMAIL|GENERAL_CHAT\",\"data\":{...}}\n\nFor CALL intent include: {\"targetPerson\":string, \"phoneNumber\":string, \"purpose\":string}\nFor REMINDER intent include: {\"title\":string, \"dateTime\":string (ISO8601), \"description\":string}\nFor EMAIL intent include: {\"recipientName\":string, \"recipientEmail\":string, \"subject\":string, \"mainPoints\":array}\nFor GENERAL_CHAT: {\"message\":string}\n\nReturn ONLY the JSON, no other text.",
+              "role": "system"
+            },
+            {
+              "content": "={{ $json.text }}",
+              "role": "user"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8c23d310-560a-4cc9-85bb-2271350fc3d9",
+      "name": "Detect Intent",
+      "type": "n8n-nodes-base.perplexity",
+      "typeVersion": 1,
+      "position": [
+        920,
+        280
+      ],
+      "credentials": {
+        "perplexityApi": {
+          "id": "perplexity_api",
+          "name": "Perplexity API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json.choices[0].message.content;\nconst chatId = $('Normalize Text').first().json.chatId;\nconst userText = $('Normalize Text').first().json.text;\n\n// Clean JSON response\nlet cleanResponse = response.trim();\nif (cleanResponse.startsWith('```json')) {\n  cleanResponse = cleanResponse.replace(/```json\\n?/g, '').replace(/```/g, '').trim();\n}\n\ntry {\n  const parsed = JSON.parse(cleanResponse);\n  return [{ json: { parsed, chatId, userText } }];\n} catch (error) {\n  // Default to general chat if parsing fails\n  return [{ json: { \n    parsed: { intent: 'GENERAL_CHAT', data: { message: userText } }, \n    chatId, \n    userText \n  }}];\n}"
+      },
+      "id": "a8e37be6-f1eb-4ec4-9f20-2ec37f5d7082",
+      "name": "Parse Intent JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": ""
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.parsed.intent }}",
+                    "rightValue": "CALL",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "CALL"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": ""
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.parsed.intent }}",
+                    "rightValue": "REMINDER",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "REMINDER"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": ""
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.parsed.intent }}",
+                    "rightValue": "EMAIL",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "EMAIL"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": ""
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.parsed.intent }}",
+                    "rightValue": "GENERAL_CHAT",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "GENERAL_CHAT"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "71e4f384-ea7a-4de9-86c8-cb87c97c815c",
+      "name": "Route Intent",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1360,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "model": "llama-3.1-sonar-small-128k-online",
+        "messages": {
+          "values": [
+            {
+              "content": "Generate a short, natural phone call script for an AI assistant. Be concise and professional. Include:\n1. Greeting\n2. Purpose of call\n3. Key message\n4. Closing\n\nReturn only the script text, no formatting.",
+              "role": "system"
+            },
+            {
+              "content": "={{ JSON.stringify($json.parsed.data) }}",
+              "role": "user"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8dd65a88-ca53-4a45-b194-b24abfc43eb6",
+      "name": "Generate Call Script",
+      "type": "n8n-nodes-base.perplexity",
+      "typeVersion": 1,
+      "position": [
+        1580,
+        80
+      ],
+      "credentials": {
+        "perplexityApi": {
+          "id": "perplexity_api",
+          "name": "Perplexity API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "makeCall",
+        "fromPhoneNumber": "={{ $env.TWILIO_FROM_NUMBER }}",
+        "toPhoneNumber": "={{ $json.parsed.data.phoneNumber }}",
+        "message": "={{ $('Generate Call Script').first().json.choices[0].message.content }}",
+        "options": {}
+      },
+      "id": "2487461b-658e-40c3-98ed-bf929218b050",
+      "name": "Twilio Call",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1.2,
+      "position": [
+        1800,
+        80
+      ],
+      "credentials": {
+        "twilioApi": {
+          "id": "VxgPA3cWlXdMBbhL",
+          "name": "Twilio account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "llama-3.1-sonar-small-128k-online",
+        "messages": {
+          "values": [
+            {
+              "content": "Summarize the call outcome in 2-3 sentences. Include call status and any important details.",
+              "role": "system"
+            },
+            {
+              "content": "={{ JSON.stringify($json) }}",
+              "role": "user"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d9139957-5246-4c70-b133-ecb28482ca3e",
+      "name": "Summarize Call",
+      "type": "n8n-nodes-base.perplexity",
+      "typeVersion": 1,
+      "position": [
+        2020,
+        80
+      ],
+      "credentials": {
+        "perplexityApi": {
+          "id": "perplexity_api",
+          "name": "Perplexity API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Parse Intent JSON').first().json.chatId }}",
+        "text": "=✅ Call initiated!\n\n{{ $json.choices[0].message.content }}",
+        "additionalFields": {}
+      },
+      "id": "8627e848-741c-44d4-896a-c4c0c0838094",
+      "name": "Reply to Telegram (Call)",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2240,
+        80
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "boyfGomCzAhBUtUn",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "llama-3.1-sonar-small-128k-online",
+        "messages": {
+          "values": [
+            {
+              "content": "Parse the reminder details and return ONLY valid JSON in this exact format:\n{\"title\":\"string\",\"dateTime\":\"ISO8601 datetime\",\"description\":\"string\"}\n\nEnsure dateTime is in proper ISO8601 format (e.g., 2024-12-15T14:30:00Z). If no time specified, use 09:00:00 local time.",
+              "role": "system"
+            },
+            {
+              "content": "={{ JSON.stringify($json.parsed.data) }}",
+              "role": "user"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d41cb39b-6812-4101-b31c-6b30de9d7e0a",
+      "name": "Generate Reminder",
+      "type": "n8n-nodes-base.perplexity",
+      "typeVersion": 1,
+      "position": [
+        1580,
+        240
+      ],
+      "credentials": {
+        "perplexityApi": {
+          "id": "perplexity_api",
+          "name": "Perplexity API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json.choices[0].message.content;\nconst chatId = $('Parse Intent JSON').first().json.chatId;\n\n// Clean JSON response\nlet cleanResponse = response.trim();\nif (cleanResponse.startsWith('```json')) {\n  cleanResponse = cleanResponse.replace(/```json\\n?/g, '').replace(/```/g, '').trim();\n}\n\nconst rem = JSON.parse(cleanResponse);\nreturn [{ json: { rem, chatId } }];"
+      },
+      "id": "3b0727e9-98e1-4eda-9edc-c73a61b989ec",
+      "name": "Parse Reminder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "operation": "create",
+        "calendarId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "primary"
+        },
+        "summary": "={{ $json.rem.title }}",
+        "start": {
+          "dateTime": "={{ $json.rem.dateTime }}"
+        },
+        "end": {
+          "dateTime": "={{ $moment($json.rem.dateTime).add(1, 'hour').toISOString() }}"
+        },
+        "additionalFields": {
+          "description": "={{ $json.rem.description }}"
+        }
+      },
+      "id": "24e63aaf-ee9d-4dfa-a918-e6f8c986abd1",
+      "name": "Create Calendar Event",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [
+        2020,
+        240
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "google_calendar",
+          "name": "Google Calendar"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "=📅 Reminder created!\n\n*{{ $json.rem.title }}*\n⏰ {{ $moment($json.rem.dateTime).format('MMMM Do YYYY, h:mm a') }}\n\n{{ $json.rem.description }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "25ca1920-514f-49f0-b06d-b56ab4cec366",
+      "name": "Reply to Telegram (Reminder)",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2240,
+        240
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "boyfGomCzAhBUtUn",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "llama-3.1-sonar-small-128k-online",
+        "messages": {
+          "values": [
+            {
+              "content": "Generate a professional email based on the provided details. Return ONLY valid JSON:\n{\"subject\":\"string\",\"body\":\"string\"}\n\nThe body should be well-formatted, professional, and include appropriate greetings and closings.",
+              "role": "system"
+            },
+            {
+              "content": "={{ JSON.stringify($json.parsed.data) }}",
+              "role": "user"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "09083080-5828-4348-8903-ea02a87e244f",
+      "name": "Generate Email",
+      "type": "n8n-nodes-base.perplexity",
+      "typeVersion": 1,
+      "position": [
+        1580,
+        400
+      ],
+      "credentials": {
+        "perplexityApi": {
+          "id": "perplexity_api",
+          "name": "Perplexity API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json.choices[0].message.content;\nconst emailData = $('Parse Intent JSON').first().json.parsed.data;\nconst chatId = $('Parse Intent JSON').first().json.chatId;\n\n// Clean JSON response\nlet cleanResponse = response.trim();\nif (cleanResponse.startsWith('```json')) {\n  cleanResponse = cleanResponse.replace(/```json\\n?/g, '').replace(/```/g, '').trim();\n}\n\nconst email = JSON.parse(cleanResponse);\nreturn [{ json: { \n  email, \n  chatId,\n  recipientEmail: emailData.recipientEmail,\n  recipientName: emailData.recipientName\n}}];"
+      },
+      "id": "8d9a3657-b564-4c69-ad92-efea39aa73a1",
+      "name": "Parse Email JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.recipientEmail }}",
+        "subject": "={{ $json.email.subject }}",
+        "message": "={{ $json.email.body }}",
+        "options": {}
+      },
+      "id": "59fa710f-da00-4329-a3e4-c3bf87f99a0f",
+      "name": "Gmail Send",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2020,
+        400
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail_oauth",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "=✉️ Email sent to {{ $json.recipientName }}!\n\n*Subject:* {{ $json.email.subject }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "8459e67e-9c3c-4733-930b-2672661ea93a",
+      "name": "Reply to Telegram (Email)",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2240,
+        400
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "boyfGomCzAhBUtUn",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "llama-3.1-sonar-small-128k-online",
+        "messages": {
+          "values": [
+            {
+              "content": "You are a helpful, friendly personal assistant. Respond naturally and conversationally to the user. Be concise but warm.",
+              "role": "system"
+            },
+            {
+              "content": "={{ $json.userText }}",
+              "role": "user"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0f463712-d805-48af-a486-94060de57d74",
+      "name": "General Chat",
+      "type": "n8n-nodes-base.perplexity",
+      "typeVersion": 1,
+      "position": [
+        1580,
+        560
+      ],
+      "credentials": {
+        "perplexityApi": {
+          "id": "perplexity_api",
+          "name": "Perplexity API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Parse Intent JSON').first().json.chatId }}",
+        "text": "={{ $json.choices[0].message.content }}",
+        "additionalFields": {}
+      },
+      "id": "fe7fcc50-eb93-4bec-8a3a-3c9e4eb8d538",
+      "name": "Reply to Telegram (Chat)",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1800,
+        560
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "boyfGomCzAhBUtUn",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Check Voice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Voice": {
+      "main": [
+        [
+          {
+            "node": "Download Voice",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Voice": {
+      "main": [
+        [
+          {
+            "node": "Download Audio File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Audio File": {
+      "main": [
+        [
+          {
+            "node": "Transcribe Audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribe Audio": {
+      "main": [
+        [
+          {
+            "node": "Normalize Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Text": {
+      "main": [
+        [
+          {
+            "node": "Detect Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect Intent": {
+      "main": [
+        [
+          {
+            "node": "Parse Intent JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Intent JSON": {
+      "main": [
+        [
+          {
+            "node": "Route Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Intent": {
+      "main": [
+        [
+          {
+            "node": "Generate Call Script",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Reminder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "General Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Call Script": {
+      "main": [
+        [
+          {
+            "node": "Twilio Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Twilio Call": {
+      "main": [
+        [
+          {
+            "node": "Summarize Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize Call": {
+      "main": [
+        [
+          {
+            "node": "Reply to Telegram (Call)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Reminder": {
+      "main": [
+        [
+          {
+            "node": "Parse Reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Reminder": {
+      "main": [
+        [
+          {
+            "node": "Create Calendar Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Calendar Event": {
+      "main": [
+        [
+          {
+            "node": "Reply to Telegram (Reminder)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Email": {
+      "main": [
+        [
+          {
+            "node": "Parse Email JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Email JSON": {
+      "main": [
+        [
+          {
+            "node": "Gmail Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail Send": {
+      "main": [
+        [
+          {
+            "node": "Reply to Telegram (Email)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "General Chat": {
+      "main": [
+        [
+          {
+            "node": "Reply to Telegram (Chat)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "fixed-version-1",
+  "meta": {
+    "instanceId": "4ea50b59b8b6e7339950fb23df8fcc4a454f8fd6e2ec061e86f15d864b64699a"
+  },
+  "id": "t8V7jIqvGRWeJfnG",
+  "tags": []
+}

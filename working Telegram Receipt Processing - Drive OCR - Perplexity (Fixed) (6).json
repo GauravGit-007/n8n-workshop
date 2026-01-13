@@ -1,0 +1,624 @@
+{
+  "name": "Telegram Receipt Processing - Drive OCR + Perplexity (Fixed)",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message",
+          "*"
+        ],
+        "additionalFields": {}
+      },
+      "id": "2971ef62-0e40-4eb6-84f8-35401678d153",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1,
+      "position": [
+        48,
+        96
+      ],
+      "webhookId": "telegram-receipt-bot",
+      "credentials": {
+        "telegramApi": {
+          "id": "14aaly6tBCKCvc3I",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.message.photo !== undefined || ($json.message.document !== undefined && $json.message.document.mime_type && $json.message.document.mime_type.startsWith('image/')) }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "a9ad1768-09b4-4429-aba5-536003acfbbd",
+      "name": "Filter Only Images",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        272,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get the telegram message object\nconst m = $json.message;\n\nif (!m) {\n  return [{ json: { error: \"No message object found\" }}];\n}\n\nlet fileId = null;\nlet fileType = null;\n\n// Photo case (Telegram sends array of photo sizes)\nif (m.photo && Array.isArray(m.photo) && m.photo.length > 0) {\n  fileId = m.photo[m.photo.length - 1].file_id;\n  fileType = \"photo\";\n}\n\n// Document case (image sent as a file)\nif (!fileId && m.document && m.document.mime_type && m.document.mime_type.startsWith(\"image/\")) {\n  fileId = m.document.file_id;\n  fileType = \"document\";\n}\n\nif (!fileId) {\n  // Force workflow into the \"Error - Not an Image\" branch\n  return [{\n    json: {\n      isImage: false,\n      chatId: m.chat?.id,\n      messageId: m.message_id\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    isImage: true,\n    fileId,\n    fileType,\n    chatId: m.chat?.id,\n    userId: m.from?.id,\n    userName: m.from?.first_name || m.from?.username || \"User\",\n    messageId: m.message_id,\n    timestamp: m.date,\n    caption: m.caption || \"\"\n  }\n}];\n"
+      },
+      "id": "7586ff53-2cb4-443b-87df-e1cbaaa899ca",
+      "name": "Extract File Info",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        496,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $json.fileId }}",
+        "additionalFields": {}
+      },
+      "id": "cf6fc392-afe1-4cb5-acee-7ab1b48c25d2",
+      "name": "Get Telegram File Path",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        704,
+        96
+      ],
+      "webhookId": "7ae4d28b-843c-4d4a-b3a2-1c5f590e571b",
+      "credentials": {
+        "telegramApi": {
+          "id": "14aaly6tBCKCvc3I",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/file/bot8334053848:AAEWDv8_dS_Moa2e8m-p8xualPF54mQ1cSw/{{ $json.result.file_path }}\n",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "66d05e69-bd58-419a-a9dc-0dcf9b628234",
+      "name": "Download Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        928,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "name": "=receipt_{{ $json.userId || 'anon' }}_{{ $now.format('yyyy-MM-dd_HHmmss') }}.jpg",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list"
+        },
+        "folderId": {
+          "__rl": false,
+          "value": "1btgJJTa_rvpVTKtDw34iZdIBnlOnibjT",
+          "mode": "list"
+        },
+        "options": {}
+      },
+      "id": "98cd2574-5941-4abe-ace7-892ba68c3252",
+      "name": "Upload to Google Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1152,
+        96
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "LJkaixsM9zE0jGz7",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Safely extract parsed OCR text\nlet parsed = \"\";\n\ntry {\n  parsed = $json.ParsedResults[0].ParsedText || \"\";\n} catch (e) {\n  parsed = \"\";\n}\n\nreturn [\n  {\n    json: {\n      ocr_text: parsed.trim()\n    }\n  }\n];\n"
+      },
+      "id": "5d85860b-592c-4cb2-897c-f1deafe337a1",
+      "name": "Prepare OCR Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1808,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "messages": {
+          "message": [
+            {
+              "content": "You are an extraction assistant. Receive OCR text from a receipt and return ONLY a valid JSON object following this schema:\\n{\\n  \"store_name\": \"string\",\\n  \"total_amount\": number,\\n  \"currency\": \"string (ISO code or UNKNOWN)\",\\n  \"date\": \"YYYY-MM-DD or empty string\",\\n  \"category\": \"string (groceries, dining, shopping, transportation, utilities, healthcare, entertainment, other)\",\\n  \"items\": [\"array of item names\"],\\n  \"payment_method\": \"string (cash, card, online, or unknown)\",\\n  \"tax_amount\": number,\\n  \"notes\": \"string\"\\n}\\nRules: Output ONLY the JSON object (no explanation). If a field is not present, use sensible defaults (total_amount: 0, currency: 'UNKNOWN', date: today in YYYY-MM-DD if not inferable, items: []). Avoid inventing unrealistic values.",
+              "role": "system"
+            },
+            {
+              "content": "=You will be given raw OCR text extracted from a receipt:\n\n{{ $json.ocr_text }}\n\nFollow the schema below and return ONLY valid JSON:\n\n{\n  \"store_name\": \"string\",\n  \"total_amount\": number,\n  \"currency\": \"string\",\n  \"date\": \"YYYY-MM-DD or empty string\",\n  \"category\": \"string\",\n  \"items\": [\"array\"],\n  \"payment_method\": \"string\",\n  \"tax_amount\": number,\n  \"notes\": \"string\"\n}\n"
+            }
+          ]
+        },
+        "options": {},
+        "requestOptions": {}
+      },
+      "id": "be94001c-46f3-49cb-855e-f069adb47958",
+      "name": "Perplexity - Extract Structured Data",
+      "type": "n8n-nodes-base.perplexity",
+      "typeVersion": 1,
+      "position": [
+        2048,
+        96
+      ],
+      "credentials": {
+        "perplexityApi": {
+          "id": "0INNpznA4vsbh3c5",
+          "name": "Perplexity account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// --- Parse Perplexity structured JSON ---\nlet data = {};\n\ntry {\n  const raw = $json.choices?.[0]?.message?.content;\n  if (raw) {\n    data = JSON.parse(raw);\n  }\n} catch (e) {\n  data = {};\n}\n\n// --- Create standardized output ---\nconst cleaned = {\n  store_name: data.store_name || \"Unknown\",\n  total_amount: Number(data.total_amount || 0),\n  currency: data.currency || \"UNKNOWN\",\n  date: data.date || \"\",\n  category: data.category || \"other\",\n  items: Array.isArray(data.items) ? data.items.join(\", \") : \"\",\n  payment_method: data.payment_method || \"unknown\",\n  tax_amount: Number(data.tax_amount || 0),\n  notes: data.notes || \"\"\n};\n\nreturn [{ json: cleaned }];"
+      },
+      "id": "3c62d6cb-65af-43c1-b728-44c6b6f9fe02",
+      "name": "Clean & Standardize Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2256,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1ML8lFZOdPbEMiO04YyON6y9517tD7DMGUFAhMEGqPx4",
+          "mode": "list",
+          "cachedResultName": "Reciepts_analyzed_Data",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ML8lFZOdPbEMiO04YyON6y9517tD7DMGUFAhMEGqPx4/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ML8lFZOdPbEMiO04YyON6y9517tD7DMGUFAhMEGqPx4/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "store_name",
+              "displayName": "store_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "total_amount",
+              "displayName": "total_amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "currency",
+              "displayName": "currency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "items",
+              "displayName": "items",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "payment_method",
+              "displayName": "payment_method",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "tax_amount",
+              "displayName": "tax_amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "notes",
+              "displayName": "notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "e48a545f-0620-4472-805c-b06886c1e67a",
+      "name": "Append to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        2464,
+        96
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Oinxr6MTT45KWs1S",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "messages": {
+          "message": [
+            {
+              "content": "You are a concise assistant that writes Telegram-friendly confirmation messages. Output plain text only (no JSON). Keep it 2-4 short sentences and include the receipt link at the end.",
+              "role": "system"
+            },
+            {
+              "content": "Hi! Your purchase at SHOP'S NAME for 32.1 USD on 2020-12-11\n(shopping: Lorem ipsum, Dolor sit amet, …) is confirmed.\n\nView your receipt:\n<receipt-link>\n"
+            }
+          ]
+        },
+        "options": {},
+        "requestOptions": {}
+      },
+      "type": "n8n-nodes-base.perplexity",
+      "typeVersion": 1,
+      "position": [
+        2704,
+        96
+      ],
+      "id": "f93f5bdf-45be-4277-86c4-d5d5ab1b2e48",
+      "name": "Generate summary",
+      "credentials": {
+        "perplexityApi": {
+          "id": "0INNpznA4vsbh3c5",
+          "name": "Perplexity account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nreturn items.map(i => {\n  const text = i.json.choices?.[0]?.message?.content || \"\";\n\n  return {\n    json: {\n      text\n    }\n  };\n});\n"
+      },
+      "id": "1c9482fa-96e2-4f1c-9059-2dcd74043a1d",
+      "name": "Prepare Telegram Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2912,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "683340074",
+        "text": "={{ $json.text }}\n",
+        "additionalFields": {}
+      },
+      "id": "2d6b80ec-fd60-4a60-8dfb-d291ed7861a3",
+      "name": "Send Telegram Reply",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        3136,
+        96
+      ],
+      "webhookId": "7370405c-9d3c-4d40-abb5-a8d8afa564b5",
+      "credentials": {
+        "telegramApi": {
+          "id": "14aaly6tBCKCvc3I",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Extract File Info').item.json.chatId }}",
+        "text": "❌ I can only process image receipts. Please send a photo or image document.",
+        "additionalFields": {}
+      },
+      "id": "9b7abb9e-6168-4083-a694-0f3c8d0893c9",
+      "name": "Error - Not an Image",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        496,
+        272
+      ],
+      "webhookId": "a27a9900-2e56-4426-9eb7-72d60c2cfeb6",
+      "credentials": {
+        "telegramApi": {
+          "id": "14aaly6tBCKCvc3I",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.ocr.space/parse/image",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "K85191174988957"
+            },
+            {
+              "name": "language",
+              "value": "eng"
+            },
+            {
+              "name": "filetype",
+              "value": "=JPG"
+            },
+            {
+              "name": "scale",
+              "value": "true"
+            },
+            {
+              "name": "istable",
+              "value": "true"
+            },
+            {
+              "name": "OCREngine",
+              "value": "2"
+            },
+            {
+              "name": "url",
+              "value": "={{ $json.webContentLink }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1616,
+        96
+      ],
+      "id": "9aea0b5f-0562-47be-9d45-80abc0c9a25f",
+      "name": "HTTP Request"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Filter Only Images",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Only Images": {
+      "main": [
+        [
+          {
+            "node": "Extract File Info",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error - Not an Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract File Info": {
+      "main": [
+        [
+          {
+            "node": "Get Telegram File Path",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Telegram File Path": {
+      "main": [
+        [
+          {
+            "node": "Download Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Image": {
+      "main": [
+        [
+          {
+            "node": "Upload to Google Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to Google Drive": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare OCR Text": {
+      "main": [
+        [
+          {
+            "node": "Perplexity - Extract Structured Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Perplexity - Extract Structured Data": {
+      "main": [
+        [
+          {
+            "node": "Clean & Standardize Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean & Standardize Data": {
+      "main": [
+        [
+          {
+            "node": "Append to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append to Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Generate summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate summary": {
+      "main": [
+        [
+          {
+            "node": "Prepare Telegram Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Telegram Reply": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Prepare OCR Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "2fb88c4a-4887-49c5-a79a-9ed42ca8a3db",
+  "meta": {
+    "instanceId": "d2cc5dbb0318d72d9ba1c6b1f7b6d6010045e9749515aca31b4f55e89349d3cc"
+  },
+  "id": "OaemQhE7vzA2LHgS",
+  "tags": []
+}
